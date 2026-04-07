@@ -60,17 +60,18 @@ try Airlock.runIsolated {
 let pngData = try Data(contentsOf: outputURL)
 ```
 
-**Image pipeline that may crash (e.g. trap / `EXC_BAD_ACCESS` on bad input):**
+**Third-party image decoder that sometimes crashes (trap / `EXC_BAD_ACCESS` on hostile bytes):**
 
-Decode in the child and return bytes through a **temp file** the parent chose (`Void` `runIsolated`), so a failure stays in the child. If it dies, the parent gets `AirlockIsolationError.childExitedAbnormally` (or treat a missing file as failure after checking `runIsolated`).
+Decode in the child and hand bytes back through a **temp file** the parent chose (`Void` `runIsolated`), so a vendor bug does not take down your app. If the child dies, the parent gets `AirlockIsolationError.childExitedAbnormally` (or a missing output file if you need to distinguish success—check the error from `runIsolated` first).
 
 ```swift
 import AppKit
 import Airlock
 
-/// Your decode path — e.g. native / fragile code that may crash on corrupt bytes instead of throwing.
-enum ImageDecode {
+/// Stand-in for a real SDK whose native code may trap on corrupt input instead of returning an error.
+enum VendorImageKit {
     static func makeImage(from data: Data) -> NSImage {
+        // Replace with your vendor decode. This stub compiles; a real decoder might crash here.
         NSImage(data: data)!
     }
 }
@@ -81,7 +82,7 @@ func pngData(fromUntrustedImageBytes data: Data) throws -> Data {
     defer { try? FileManager.default.removeItem(at: output) }
 
     try Airlock.runIsolated {
-        let image = ImageDecode.makeImage(from: data)
+        let image = VendorImageKit.makeImage(from: data)
         guard let tiff = image.tiffRepresentation,
               let rep = NSBitmapImageRep(data: tiff),
               let png = rep.representation(using: .png, properties: [:]) else { return }
@@ -92,7 +93,7 @@ func pngData(fromUntrustedImageBytes data: Data) throws -> Data {
 }
 ```
 
-Keep **decode and export inside** `runIsolated` so only the child runs that stack.
+Replace `VendorImageKit` with your dependency; keep the **decode and encode inside** `runIsolated` so only the child executes its native stack.
 
 ### Bad (common mistakes)
 
@@ -109,10 +110,10 @@ try Airlock.runIsolated {
 **Treating `runIsolated` like “async drop-in” for anything touching shared runtime state you do not understand:**
 
 ```swift
-// May touch dispatch sources, ObjC runtime state, half‑initialized singletons, etc.
+// May touch dispatch sources, objc runtime state, half‑initialized SDK singletons, etc.
 // Without auditing fork safety, this can deadlock or corrupt—not a generic “sandbox my whole app” switch.
 try Airlock.runIsolated {
-    AppSubsystem.shared.doStuffThatAssumesSingleProcess()
+    MySDK.shared.doStuffThatAssumesSingleProcess()
 }
 ```
 
