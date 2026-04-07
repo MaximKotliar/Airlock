@@ -16,6 +16,7 @@ Git flow for this repo:
 
 ## Checklist
 
+- [ ] **CI** check **Swift PM** is green on this PR (required for merge once branch protection is enabled — see [GITHUB_SETUP.md](.github/GITHUB_SETUP.md))
 - [ ] `swift test` passes locally
 - [ ] README / public API updated if needed
 
