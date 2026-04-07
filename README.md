@@ -127,6 +127,10 @@ try Airlock.runIsolated {
 }
 ```
 
+## Contributing / Git branches
+
+CI and git-flow (**PR → `develop` → `main`**) are described in [`.github/BRANCHING.md`](.github/BRANCHING.md) and [`.github/GITHUB_SETUP.md`](.github/GITHUB_SETUP.md).
+
 ## Requirements
 
 - macOS 12+ (Monterey). **This package targets macOS only**—`fork(2)` is not usable on iOS, tvOS, watchOS, etc.

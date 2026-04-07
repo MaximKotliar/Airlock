@@ -7,7 +7,7 @@ This repo uses a **git-flow style** workflow:
 3. **Feature branches** — `feature/…`, `fix/…`, etc., branched from **`develop`**, merged back via PR to **`develop`**.
 4. **Releases** — When `develop` is ready, open **`develop` → `main`** and merge after review.
 
-Protected branch rules (on GitHub) enforce pull requests before merging into `main` and `develop`. CI must pass where configured.
+**Configure GitHub** so **Swift PM** (CI) **must pass before merge** — see [_Require tests before PR merge_ in GITHUB_SETUP.md](GITHUB_SETUP.md#require-tests-before-pr-merge-status-checks). On **GitHub Free private** accounts, use the **Settings** UI; with **Pro** / **public** repos, you can apply [ruleset-protect-branches.json](ruleset-protect-branches.json) via `gh api`.
 
 ```text
 feature/foo ──PR──► develop ──PR (release)──► main
