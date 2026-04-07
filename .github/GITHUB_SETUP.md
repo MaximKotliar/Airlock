@@ -2,7 +2,7 @@
 
 ## CI
 
-Workflow [`.github/workflows/ci.yml`](workflows/ci.yml) runs **`swift test`** on **macOS 15** with Swift **6.1** on every push and pull request to **`main`** and **`develop`**.
+Workflow [`.github/workflows/ci.yml`](workflows/ci.yml) runs **`swift test`** on **`macos-latest`** with **`xcode-select`** set to **Xcode 26.3** on every push and pull request to **`main`** and **`develop`**.
 
 ## Branch protection (git-flow)
 
