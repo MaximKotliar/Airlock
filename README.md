@@ -22,6 +22,12 @@ After `fork`, the kernel does **not** immediately copy every physical page of yo
 
 The **return-value** API also uses a **small explicit `mmap`** region for JSON; that is separate from “how big your app already was” at fork time.
 
+## Why `print` still works in the child
+
+`fork` gives the child a **copy of the parent’s open file descriptor table** at the moment of the split. **Standard I/O** (`stdin` **0**, `stdout` **1**, `stderr` **2**) still refers to the **same underlying sinks** the parent was using—terminal, pipe, Xcode’s console stream, a log file, etc. Swift’s **`print`** writes to **`stdout`**, so output from the isolated child shows up the same way as in the parent **without any special bridging**.
+
+**Caveats:** if both processes **`print` at the same time**, lines can **interleave** oddly. Closing or redirecting **`stdout`** in one process can affect what the other sees depending on how the descriptor is shared. None of this is Airlock-specific—it is normal POSIX **`fork`** inheritance.
+
 ## What works well inside an isolated block
 
 - **Produce new data** from inputs: parse, transform, validate, run algorithms, call libraries you do not fully trust.
