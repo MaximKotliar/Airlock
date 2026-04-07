@@ -246,4 +246,4 @@ do {
 
 ## License
 
-Add your license here if the package is published.
+[Zero-Clause BSD (0BSD)](https://opensource.org/licenses/0BSD) — see [`LICENSE`](LICENSE). You may use, modify, and distribute this software **without** retaining copyright or license notices in your own distributions (permissive “no notice” open source).
