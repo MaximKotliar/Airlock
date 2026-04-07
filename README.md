@@ -8,7 +8,7 @@ Run Swift work in a **forked child process** so crashes and `fatalError` stay is
 
 If those topics are new to you, start with documentation or a dedicated helper process / **XPC** design aimed at isolation—those approaches encode clearer boundaries than ad hoc `fork` in a large codebase.
 
-**Inspired by:** [Core Dumped — "The Weird Way Linux Creates Processes"](https://www.youtube.com/watch?v=SwIPOf2YAgI&t=903s)
+**Inspired by:** [Core Dumped — "The Weird Way Linux Creates Processes"](https://www.youtube.com/watch?v=SwIPOf2YAgI)
 
 ## Why fork instead of a separate service?
 
