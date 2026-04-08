@@ -18,12 +18,17 @@ public enum AirlockIsolationError: Error {
     case invalidShmemSize
 }
 
+/// Fork-based crash isolation for **narrow** macOS use cases only.
+///
+/// Post-`fork` execution of arbitrary Swift is fragile (threads, locks, ARC, allocators). The **ideal** shape is a **C library** behind a Swift **`struct`** wrapper on a path where **ARC is not involved**. See the package README.
 public enum Airlock {
 
     /// Runs `action` in a forked child. The parent blocks on `waitpid` until the child exits and is reaped (no return value).
     ///
-    /// The child ends with `_exit(0)` after `action`.
-    public static func runIsolated(action: @escaping () -> Void) throws {
+    /// `action` executes only in the child. A crash or `fatalError` inside `action` ends the child, not the parent; the parent receives ``AirlockIsolationError/childExitedAbnormally(waitStatus:)`` or ``AirlockIsolationError/childExitCode(_:)`` instead of dying.
+    ///
+    /// The child ends with `_exit(0)` after `action` when `action` completes normally.
+    public static func runIsolated(action: () -> Void) throws {
         let pid = airlock_fork()
         if pid == 0 {
             defer { _exit(0) }
@@ -44,12 +49,14 @@ public extension Airlock {
 
     /// Runs `action` in a forked child and returns its value in the parent via anonymous shared memory (`MAP_ANON` | `MAP_SHARED`).
     ///
+    /// `action` executes only in the child. A crash or `fatalError` inside `action` ends the child, not the parent; the parent throws the same isolation errors as ``Airlock/runIsolated(action:)``.
+    ///
     /// The mapping is created before `fork` so parent and child share the same region: 8-byte big-endian payload length, then JSON.
     ///
     /// `fork` in a multithreaded Swift process is POSIX-unsafe between `fork` and `exec`; running arbitrary Swift in the child can fail if other threads held locks at fork time. This API intentionally trades strict POSIX semantics for convenience.
     ///
     /// - Note: To run `action` in a child without returning a decoded value, use ``Airlock/runIsolated(action:)``.
-    static func runIsolated<Result: Codable>(shmemSize: Int = 1024 * 1024, action: @escaping () -> Result) throws -> Result {
+    static func runIsolated<Result: Codable>(shmemSize: Int = 1024 * 1024, action: () -> Result) throws -> Result {
         let header = MemoryLayout<UInt64>.size
         guard shmemSize > header else {
             throw AirlockIsolationError.invalidShmemSize
