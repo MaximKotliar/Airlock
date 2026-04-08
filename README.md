@@ -2,49 +2,94 @@
 
 Run Swift work in a **forked child process** so crashes and `fatalError` stay isolated from your main process, while you keep the same **UID**, entitlements, and environment as the parent. Results can be returned to the parent as **`Codable` values** (JSON over a small shared anonymous mapping) or you can run a block with **no return value**.
 
-**Guarantee for your app process:** Code in the **isolated closure** runs only in a **forked child**. A crash, trap, or `fatalError` **in that closure** terminates **that child**, not the **parent**—so that failure **does not** bring down your main process. The parent keeps running and `runIsolated` **throws** (e.g. abnormal exit, non‑zero child status) so you can handle it. The child can still crash; your app process is what stays alive. This does not fix shared‑resource footguns (files, sockets, etc.—see later sections).
+**Parent vs child:** The **parent** does not abort when the child crashes or hits **`fatalError`**—you get a **thrown** `AirlockIsolationError` (e.g. abnormal exit, non‑zero status). **Shared** files, sockets, and inherited FDs can still bite (see **What does *not* work / what to avoid**).
 
-**Scope:** Airlock is **not a general-purpose isolation tool** for everyday Swift or app UI code. The **ideal** fit is a **C library** behind a thin **`struct` wrapper in Swift** on a path where **ARC never runs**—no `class` instances, no retainable Swift objects in the isolated work: only value types, C calls, and memory you treat explicitly (opaque handles, stack state; heap owned by the C side you trust after `fork`). Broader Swift (“some code that barely touches ARC”) is **possible** outliers, not the default story. Most normal Swift **allocates**, retains, and runs concurrency in ways that make post-`fork` execution fragile. **Treat this as expert territory:** if you do not already know why that matters and how your workload behaves after `fork`, prefer **XPC**, a helper process, or another design with explicit boundaries.
+**Fit:** **Niche**, not general app/UI Swift. **Ideal:** a **C library** + thin Swift **`struct`**, **ARC-free** in the isolated block; most other Swift after `fork` needs a hard audit.
 
-## Before you use this
+## ⚠️ Before you use this
 
 **Use Airlock only if you understand how `fork` works** and how to reason about **shared state** in a multiprocess model: what is inherited across the split (file descriptors, memory mappings, code), what is logically private after copy-on-write, and how that interacts with **threads, locks, and the Swift runtime** (ARC, allocators, libdispatch) in a real macOS app. This package does not paper over POSIX or Swift-runtime foot-guns.
 
-If those topics are new to you, start with documentation or a dedicated helper process / **XPC** design aimed at isolation—those approaches encode clearer boundaries than ad hoc `fork` in a large codebase.
+If those topics are new to you, prefer a dedicated helper process or **XPC**—clearer boundaries than ad hoc `fork` in a large codebase.
 
 **Inspired by:** [Core Dumped — "The Weird Way Linux Creates Processes"](https://www.youtube.com/watch?v=SwIPOf2YAgI)
 
-## Why fork instead of a separate service?
+## Add the package
 
-Sometimes you need to run **risky or “unsafe” logic** where a bug might trap or abort, but you still want the **main app to keep running** with its normal permissions. That need alone does **not** mean `fork`-inside-your-app is appropriate—only **small, deliberately bounded** workloads are plausible, with **C + Swift `struct` facades and no ARC on that path** as the usual sweet spot.
+In your `Package.swift`:
 
-Spawning a dedicated **XPC helper** or another app target is often the right long-term design, but it is **more moving parts**: signing, plist services, Mach ports, and IPC protocols. Where `fork` is defensible for **crash containment**, it gives you a separate address space and PID with less ceremony: the child is a disposable clone of your process that can exit without taking the parent down—**provided** you accept the runtime and threading constraints above.
+```swift
+dependencies: [
+    .package(url: "https://github.com/MaximKotliar/Airlock.git", from: "0.0.1")
+],
+targets: [
+    .target(
+        name: "MyApp",
+        dependencies: [.product(name: "Airlock", package: "Airlock")]
+    )
+]
+```
 
-## Memory: why this is not a full duplicate RAM spike
+For the latest on `main` instead of a tagged release, use `.package(url: "https://github.com/MaximKotliar/Airlock.git", branch: "main")`.
 
-After `fork`, the kernel does **not** immediately copy every physical page of your process. Parent and child share the same **read-only** view of existing mappings, and writable pages are handled with **copy-on-write (COW)** when one side actually modifies them. So you get a **new process and virtual address space** without an instant **2× resident memory** snapshot of everything you had mapped. Memory use grows as **each side touches and dirties** pages, not up front as a naive “clone all RAM” would suggest.
+## Usage
 
-The **return-value** API also uses a **small explicit `mmap`** region for JSON; that is separate from “how big your app already was” at fork time.
+### 1. Isolate side effects, no return value
 
-## Why `print` still works in the child
+The parent **waits** for the child and **reaps** it; errors map to `AirlockIsolationError` (`forkFailed`, `waitFailed`, `childExitedAbnormally`, `childExitCode`, …).
 
-`fork` gives the child a **copy of the parent’s open file descriptor table** at the moment of the split. **Standard I/O** (`stdin` **0**, `stdout` **1**, `stderr` **2**) still refers to the **same underlying sinks** the parent was using—terminal, pipe, Xcode’s console stream, a log file, etc. Swift’s **`print`** writes to **`stdout`**, so output from the isolated child shows up the same way as in the parent **without any special bridging**.
+```swift
+import Airlock
 
-**Caveats:** if both processes **`print` at the same time**, lines can **interleave** oddly. Closing or redirecting **`stdout`** in one process can affect what the other sees depending on how the descriptor is shared. None of this is Airlock-specific—it is normal POSIX **`fork`** inheritance.
+try Airlock.runIsolated {
+    // If this fatalError runs in the child, the parent gets an error—not a crash.
+    processUntrustedInput(data)
+}
+```
 
-## What can work inside an isolated block (when you know the stack)
+### 2. Isolate and return a `Codable` result
 
-- **Ideal:** a **C library** behind a **`struct`** type in Swift that forwards to C—**no ARC** in the child work (no classes, no `String`/`Array`/`Data` in hot paths unless you accept refcount traffic). Prefer opaque handles and C-owned buffers; map out to **`Codable`** only when building the return value.
-- **Riskier outliers:** **pure-ish** or **allocation-bounded** Swift—value-heavy code you have **audited**—still **not** a guarantee for arbitrary Swift.
-- **Side effects that are explicitly yours**: write to a path you pass in, use APIs that are fine in a short‑lived child (mind file locks and network semantics if you share resources with the parent).
+Default shared buffer is 1 MB; increase `shmemSize` if JSON might be larger.
 
-Here **“might work”** replaces **“recommended for most Swift.”** Default assumption: **use XPC or a helper** unless you have analyzed your specific call graph and allocator/runtime behavior.
+```swift
+import Airlock
 
-## What does *not* work / what to avoid
+struct Report: Codable, Equatable {
+    var ok: Bool
+    var summary: String
+}
 
-- **Do not treat global or shared mutable process state as authoritative** for the parent. The child is a **different process** after `fork`. Mutations to in‑memory singletons, caches, or `static` data **do not** update the parent. If it is not part of the **`Codable` return value** (or an intentional file/IPC side effect you design), assume the parent **never sees it**.
-- **Do not rely on other threads** that existed in the parent. Only the forking thread’s logical flow continues in the child; locks held by other threads at `fork` time are a classic source of subtle deadlock or corruption if you run rich runtime code in the child. Airlock trades **strict POSIX “async‑signal‑safe only after fork”** rules for **practical Swift usage**—keep isolated work **bounded** and **simple** when you can.
-- **Returning a value:** only what you encode as **JSON** via `Codable` crosses back (subject to `shmemSize`). Huge payloads need a larger `shmemSize` or a different IPC strategy.
+let report = try Airlock.runIsolated {
+    Report(ok: true, summary: analyze())
+}
+
+let big = try Airlock.runIsolated(shmemSize: 4 * 1024 * 1024) {
+    Report(ok: true, summary: String(repeating: "x", count: 500_000))
+}
+```
+
+### 3. Handle errors
+
+```swift
+import Airlock
+
+do {
+    try Airlock.runIsolated { riskyWork() }
+} catch let error as AirlockIsolationError {
+    switch error {
+    case .childExitedAbnormally(let status):
+        // e.g. SIGABRT / trap in child
+        break
+    case .childExitCode(let code):
+        // reserved in Codable path: 2 = JSON too large for shmemSize, 3 = encode/copy failure
+        break
+    case .decodingFailed(let underlying):
+        break
+    default:
+        break
+    }
+}
+```
 
 ## Good vs bad usage examples
 
@@ -140,6 +185,38 @@ try Airlock.runIsolated {
 }
 ```
 
+## Why fork instead of a separate service?
+
+Sometimes you need to run **risky or “unsafe” logic** where a bug might trap or abort, but you still want the **main app to keep running** with its normal permissions. That need alone does **not** mean `fork`-inside-your-app is appropriate—only **small, deliberately bounded** workloads are plausible, with **C + Swift `struct` facades and no ARC on that path** as the usual sweet spot.
+
+Spawning a dedicated **XPC helper** or another app target is often the right long-term design, but it is **more moving parts**: signing, plist services, Mach ports, and IPC protocols. Where `fork` is defensible for **crash containment**, it gives you a separate address space and PID with less ceremony: the child is a disposable clone of your process that can exit without taking the parent down—**provided** you accept the runtime and threading constraints above.
+
+## Memory: why this is not a full duplicate RAM spike
+
+After `fork`, the kernel does **not** immediately copy every physical page of your process. Parent and child share the same **read-only** view of existing mappings, and writable pages are handled with **copy-on-write (COW)** when one side actually modifies them. So you get a **new process and virtual address space** without an instant **2× resident memory** snapshot of everything you had mapped. Memory use grows as **each side touches and dirties** pages, not up front as a naive “clone all RAM” would suggest.
+
+The **return-value** API also uses a **small explicit `mmap`** region for JSON; that is separate from “how big your app already was” at fork time.
+
+## Why `print` still works in the child
+
+`fork` gives the child a **copy of the parent’s open file descriptor table** at the moment of the split. **Standard I/O** (`stdin` **0**, `stdout` **1**, `stderr` **2**) still refers to the **same underlying sinks** the parent was using—terminal, pipe, Xcode’s console stream, a log file, etc. Swift’s **`print`** writes to **`stdout`**, so output from the isolated child shows up the same way as in the parent **without any special bridging**.
+
+**Caveats:** if both processes **`print` at the same time**, lines can **interleave** oddly. Closing or redirecting **`stdout`** in one process can affect what the other sees depending on how the descriptor is shared. None of this is Airlock-specific—it is normal POSIX **`fork`** inheritance.
+
+## What can work inside an isolated block (when you know the stack)
+
+- **Ideal:** a **C library** behind a **`struct`** type in Swift that forwards to C—**no ARC** in the child work (no classes, no `String`/`Array`/`Data` in hot paths unless you accept refcount traffic). Prefer opaque handles and C-owned buffers; map out to **`Codable`** only when building the return value.
+- **Riskier outliers:** **pure-ish** or **allocation-bounded** Swift—value-heavy code you have **audited**—still **not** a guarantee for arbitrary Swift.
+- **Side effects that are explicitly yours**: write to a path you pass in, use APIs that are fine in a short‑lived child (mind file locks and network semantics if you share resources with the parent).
+
+Here **“might work”** replaces **“recommended for most Swift.”** Default assumption: **use XPC or a helper** unless you have analyzed your specific call graph and allocator/runtime behavior.
+
+## What does *not* work / what to avoid
+
+- **Do not treat global or shared mutable process state as authoritative** for the parent. The child is a **different process** after `fork`. Mutations to in‑memory singletons, caches, or `static` data **do not** update the parent. If it is not part of the **`Codable` return value** (or an intentional file/IPC side effect you design), assume the parent **never sees it**.
+- **Do not rely on other threads** that existed in the parent. Only the forking thread’s logical flow continues in the child; locks held by other threads at `fork` time are a classic source of subtle deadlock or corruption if you run rich runtime code in the child. Airlock trades **strict POSIX “async‑signal‑safe only after fork”** rules for **practical Swift usage**—keep isolated work **bounded** and **simple** when you can.
+- **Returning a value:** only what you encode as **JSON** via `Codable` crosses back (subject to `shmemSize`). Huge payloads need a larger `shmemSize` or a different IPC strategy.
+
 ## Contributing / Git branches
 
 CI and git-flow (**PR → `develop` → `main`**) are described in [`.github/BRANCHING.md`](.github/BRANCHING.md) and [`.github/GITHUB_SETUP.md`](.github/GITHUB_SETUP.md).
@@ -179,80 +256,6 @@ DispatchQueue.global(qos: .userInitiated).async {
     let report = try? Airlock.runIsolated { makeReport() }
     DispatchQueue.main.async {
         // update UI with report
-    }
-}
-```
-
-## Add the package
-
-In your `Package.swift`:
-
-```swift
-dependencies: [
-    .package(path: "../Airlock") // or a Git URL / version
-],
-targets: [
-    .target(name: "MyApp", dependencies: [
-        .product(name: "Airlock", package: "Airlock")
-    ])
-]
-```
-
-## Usage
-
-### 1. Isolate side effects, no return value
-
-The parent **waits** for the child and **reaps** it; errors map to `AirlockIsolationError` (`forkFailed`, `waitFailed`, `childExitedAbnormally`, `childExitCode`, …).
-
-```swift
-import Airlock
-
-try Airlock.runIsolated {
-    // If this fatalError runs in the child, the parent gets an error—not a crash.
-    processUntrustedInput(data)
-}
-```
-
-### 2. Isolate and return a `Codable` result
-
-Default shared buffer is 1 MB; increase `shmemSize` if JSON might be larger.
-
-```swift
-import Airlock
-
-struct Report: Codable, Equatable {
-    var ok: Bool
-    var summary: String
-}
-
-let report = try Airlock.runIsolated {
-    Report(ok: true, summary: analyze())
-}
-
-let big = try Airlock.runIsolated(shmemSize: 4 * 1024 * 1024) {
-    Report(ok: true, summary: String(repeating: "x", count: 500_000))
-}
-```
-
-### 3. Handle errors
-
-```swift
-import Airlock
-
-do {
-    try Airlock.runIsolated { riskyWork() }
-} catch let error as AirlockIsolationError {
-    switch error {
-    case .childExitedAbnormally(let status):
-        // e.g. SIGABRT / trap in child
-        break
-    case .childExitCode(let code):
-        // reserved in Codable path: 2 = JSON too large for shmemSize, 3 = encode/copy failure
-        break
-    case .decodingFailed(let underlying):
-        break
-    default:
-        break
     }
 }
 ```
