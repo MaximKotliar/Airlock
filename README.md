@@ -14,24 +14,6 @@ If those topics are new to you, prefer a dedicated helper process or **XPC**—c
 
 **Inspired by:** [Core Dumped — "The Weird Way Linux Creates Processes"](https://www.youtube.com/watch?v=SwIPOf2YAgI)
 
-## Add the package
-
-In your `Package.swift`:
-
-```swift
-dependencies: [
-    .package(url: "https://github.com/MaximKotliar/Airlock.git", from: "0.0.1")
-],
-targets: [
-    .target(
-        name: "MyApp",
-        dependencies: [.product(name: "Airlock", package: "Airlock")]
-    )
-]
-```
-
-For the latest on `main` instead of a tagged release, use `.package(url: "https://github.com/MaximKotliar/Airlock.git", branch: "main")`.
-
 ## Usage
 
 ### 1. Isolate side effects, no return value
