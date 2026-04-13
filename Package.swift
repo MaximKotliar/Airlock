@@ -14,28 +14,34 @@ let package = Package(
     ],
     targets: [
         .target(name: Name.airlock,
-                dependencies: [.Internal.shims],
-                exclude: [Name.shims]),
+                dependencies: [.Internal.libAirlock],
+                exclude: [Name.libAirlock]),
         .target(
-            name: Name.shims,
-            path: "Sources/\(Name.airlock)/\(Name.shims)"
+            name: Name.libAirlock,
+            path: "Sources/\(Name.airlock)/\(Name.libAirlock)"
         ),
         .testTarget(name: Name.airlockTests,
-                    dependencies: [.Internal.airlock])
+                    dependencies: [.Internal.airlock]),
+        .executableTarget(name: "Tool",
+                          dependencies: [.Internal.airlock]),
+        .executableTarget(name: Name.testHelper,
+                          dependencies: [.Internal.airlock])
     ]
 )
 
 // MARK: - String Constants
 enum Name {
     static let airlock = "Airlock"
-    static let shims = "Shims"
+    static let libAirlock = "libAirlock"
     static let airlockTests = "AirlockTests"
+    static let testHelper = "TestHelper"
 }
 
 // MARK: - Target Dependencies
 extension Target.Dependency {
     enum Internal {
         static let airlock: Target.Dependency = .byName(name: Name.airlock)
-        static let shims: Target.Dependency = .byName(name: Name.shims)
+        static let libAirlock: Target.Dependency = .byName(name: Name.libAirlock)
+        static let testHelper: Target.Dependency = .byName(name: Name.testHelper)
     }
 }
